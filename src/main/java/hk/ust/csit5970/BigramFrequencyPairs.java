@@ -2,6 +2,7 @@ package hk.ust.csit5970;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Iterator;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -34,9 +35,6 @@ import org.apache.log4j.Logger;
 public class BigramFrequencyPairs extends Configured implements Tool {
 	private static final Logger LOG = Logger.getLogger(BigramFrequencyPairs.class);
 
-	/*
-	 * TODO: write your Mapper here.
-	 */
 	private static class MyMapper extends
 			Mapper<LongWritable, Text, PairOfStrings, IntWritable> {
 
@@ -49,28 +47,56 @@ public class BigramFrequencyPairs extends Configured implements Tool {
 				throws IOException, InterruptedException {
 			String line = ((Text) value).toString();
 			String[] words = line.trim().split("\\s+");
-			
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+
+			// an empty string is "less" than any other string
+			String EMPTY_STRING = "";
+			if (words.length > 1){
+				String previous_word = words[0];
+				for (int i = 1; i < words.length; i++) {
+					String w = words[i];
+					// Skip empty words
+					if (w.length() == 0) {
+						continue;
+					}
+					BIGRAM.set(previous_word, w);
+					context.write(BIGRAM, ONE);
+					// emit ((a, EMPTY_STRING),ONE) to count the total number of bigrams starting with a
+					BIGRAM.set(previous_word, EMPTY_STRING);
+					context.write(BIGRAM, ONE);
+					previous_word = w;
+				}
+			}
 		}
 	}
 
-	/*
-	 * TODO: Write your reducer here.
-	 */
 	private static class MyReducer extends
 			Reducer<PairOfStrings, IntWritable, PairOfStrings, FloatWritable> {
 
 		// Reuse objects.
 		private final static FloatWritable VALUE = new FloatWritable();
 
+		private int marginal;
+
 		@Override
 		public void reduce(PairOfStrings key, Iterable<IntWritable> values,
 				Context context) throws IOException, InterruptedException {
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+
+			Iterator<IntWritable> iter = values.iterator();
+			int sum = 0;
+			while (iter.hasNext()) {
+				sum += iter.next().get();
+			}
+			if(key.getRightElement().length() == 0){
+				// Order inversion: if the right element is empty, it comes first
+				// key(a, EMPTY_STRING) comes first
+				marginal = sum;
+				VALUE.set((float)sum);
+				context.write(key, VALUE);
+			}else{
+				// key(a, b) comes next
+				VALUE.set((float)sum / (float)marginal);
+				context.write(key, VALUE);
+			}
 		}
 	}
 	
@@ -81,9 +107,13 @@ public class BigramFrequencyPairs extends Configured implements Tool {
 		@Override
 		public void reduce(PairOfStrings key, Iterable<IntWritable> values,
 				Context context) throws IOException, InterruptedException {
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+			Iterator<IntWritable> iter = values.iterator();
+			int sum = 0;
+			while (iter.hasNext()) {
+				sum += iter.next().get();
+			}
+			SUM.set(sum);
+			context.write(key, SUM);
 		}
 	}
 

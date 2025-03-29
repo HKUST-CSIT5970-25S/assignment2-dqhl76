@@ -38,11 +38,12 @@ import java.util.HashMap;
 public class CORPairs extends Configured implements Tool {
 	private static final Logger LOG = Logger.getLogger(CORPairs.class);
 
-	/*
-	 * TODO: Write your first-pass Mapper here.
-	 */
+	// CORMapper1 is a basic mapper that emits <word, count> for each word
 	private static class CORMapper1 extends
 			Mapper<LongWritable, Text, Text, IntWritable> {
+		private final static Text WORD = new Text();
+		private final static IntWritable VALUE = new IntWritable();
+
 		@Override
 		public void map(LongWritable key, Text value, Context context)
 				throws IOException, InterruptedException {
@@ -50,49 +51,85 @@ public class CORPairs extends Configured implements Tool {
 			// Please use this tokenizer! DO NOT implement a tokenizer by yourself!
 			String clean_doc = value.toString().replaceAll("[^a-z A-Z]", " ");
 			StringTokenizer doc_tokenizer = new StringTokenizer(clean_doc);
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+
+			while (doc_tokenizer.hasMoreTokens()) {
+				String word = doc_tokenizer.nextToken();
+				if(word_set.containsKey(word)){
+					word_set.put(word, word_set.get(word) + 1);
+				} else {
+					word_set.put(word, 1);
+				}
+			}
+			for (Map.Entry<String, Integer> entry : word_set.entrySet()) {
+				WORD.set(entry.getKey());
+				VALUE.set(entry.getValue());
+				context.write(WORD, VALUE);
+			}
 		}
 	}
 
-	/*
-	 * TODO: Write your first-pass reducer here.
-	 */
+	// CORReducer1 is a basic reducer that sums up the counts for each word
 	private static class CORReducer1 extends
 			Reducer<Text, IntWritable, Text, IntWritable> {
+		private final static IntWritable VALUE = new IntWritable();
 		@Override
 		public void reduce(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+			Iterator<IntWritable> iter = values.iterator();
+			int sum = 0;
+			while (iter.hasNext()) {
+				sum += iter.next().get();
+			}
+			VALUE.set(sum);
+			context.write(key, VALUE);
 		}
 	}
 
 
-	/*
-	 * TODO: Write your second-pass Mapper here.
-	 */
 	public static class CORPairsMapper2 extends Mapper<LongWritable, Text, PairOfStrings, IntWritable> {
+
+		private final static PairOfStrings PAIR = new PairOfStrings();
+
+		// Every pair (A,B) or (B,A) only counts once per line
+		private final static IntWritable ONE = new IntWritable(1);
+
+
 		@Override
 		protected void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
 			// Please use this tokenizer! DO NOT implement a tokenizer by yourself!
+			TreeSet<String> sorted_word_set = new TreeSet<String>();
 			StringTokenizer doc_tokenizer = new StringTokenizer(value.toString().replaceAll("[^a-z A-Z]", " "));
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+
+			// use set to make sure that the word is distinct
+			while (doc_tokenizer.hasMoreTokens()) {
+				String word = doc_tokenizer.nextToken();
+				sorted_word_set.add(word);
+			}
+
+			// use the set to emit all pairs (A,B) of words, strictly A < B in lexicographical order
+			String[] words = sorted_word_set.toArray(new String[0]);
+			for (int i = 0; i < words.length; i++) {
+				for (int j = i + 1; j < words.length; j++) {
+					// guarantee that the left word is less than the right word in lexicographical order
+					// TreeSet container is sorted, so the first word is always less than the second word
+					PAIR.set(words[i], words[j]);
+					context.write(PAIR, ONE);
+				}
+			}
+
 		}
 	}
 
-	/*
-	 * TODO: Write your second-pass Combiner here.
-	 */
 	private static class CORPairsCombiner2 extends Reducer<PairOfStrings, IntWritable, PairOfStrings, IntWritable> {
+		private final static IntWritable SUM = new IntWritable();
 		@Override
 		protected void reduce(PairOfStrings key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+			int sum = 0;
+			while (values.iterator().hasNext()) {
+				sum += values.iterator().next().get();
+			}
+			SUM.set(sum);
+			context.write(key, SUM);
+
 		}
 	}
 
@@ -101,6 +138,7 @@ public class CORPairs extends Configured implements Tool {
 	 */
 	public static class CORPairsReducer2 extends Reducer<PairOfStrings, IntWritable, PairOfStrings, DoubleWritable> {
 		private final static Map<String, Integer> word_total_map = new HashMap<String, Integer>();
+		private final static DoubleWritable COR = new DoubleWritable();
 
 		/*
 		 * Preload the middle result file.
@@ -137,14 +175,20 @@ public class CORPairs extends Configured implements Tool {
 			}
 		}
 
-		/*
-		 * TODO: write your second-pass Reducer here.
-		 */
 		@Override
 		protected void reduce(PairOfStrings key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+			// COR(A, B) = Freq(A, B) / (Freq(A) * Freq(B))
+			int freq_a_b = 0;
+			while (values.iterator().hasNext()) {
+				freq_a_b += values.iterator().next().get();
+			}
+			int freq_a = word_total_map.get(key.getLeftElement());
+			int freq_b = word_total_map.get(key.getRightElement());
+
+			double cor = (double) freq_a_b / (freq_a * freq_b);
+			COR.set(cor);
+			context.write(key, COR);
+
 		}
 	}
 

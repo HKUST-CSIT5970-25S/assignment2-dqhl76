@@ -2,6 +2,7 @@ package hk.ust.csit5970;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.Map;
 
 import org.apache.commons.cli.CommandLine;
@@ -51,9 +52,20 @@ public class BigramFrequencyStripes extends Configured implements Tool {
 			String line = ((Text) value).toString();
 			String[] words = line.trim().split("\\s+");
 
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+			if (words.length > 1){
+				KEY.set( words[0]);
+				for (int i = 1; i < words.length; i++) {
+					String w = words[i];
+					// Skip empty words
+					if (w.length() == 0) {
+						continue;
+					}
+					STRIPE.increment(w);
+					context.write(KEY, STRIPE);
+					KEY.set(w);
+					STRIPE.clear();
+				}
+			}
 		}
 	}
 
@@ -72,9 +84,30 @@ public class BigramFrequencyStripes extends Configured implements Tool {
 		public void reduce(Text key,
 				Iterable<HashMapStringIntWritable> stripes, Context context)
 				throws IOException, InterruptedException {
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+			Iterator<HashMapStringIntWritable> iter = stripes.iterator();
+			String first_w = key.toString();
+			while (iter.hasNext()) {
+				SUM_STRIPES.plus(iter.next());
+			}
+
+			// calculate marginal and write out total count firstly
+			int marginal = 0;
+			for (Map.Entry<String, Integer> mapElement : SUM_STRIPES.entrySet()){
+				marginal += mapElement.getValue();
+			}
+			BIGRAM.set(first_w, "");
+			FREQ.set((float)marginal);
+			context.write(BIGRAM, FREQ);
+
+			for (Map.Entry<String, Integer> mapElement : SUM_STRIPES.entrySet()) {
+				String second_w = mapElement.getKey();
+				int value = mapElement.getValue();
+				BIGRAM.set(first_w, second_w);
+				FREQ.set((float)value/(float)marginal);
+				context.write(BIGRAM, FREQ);
+			}
+
+			SUM_STRIPES.clear();
 		}
 	}
 
@@ -91,9 +124,13 @@ public class BigramFrequencyStripes extends Configured implements Tool {
 		public void reduce(Text key,
 				Iterable<HashMapStringIntWritable> stripes, Context context)
 				throws IOException, InterruptedException {
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+			Iterator<HashMapStringIntWritable> iter = stripes.iterator();
+
+			while (iter.hasNext()) {
+				SUM_STRIPES.plus(iter.next());
+			}
+			context.write(key, SUM_STRIPES);
+			SUM_STRIPES.clear();
 		}
 	}
 

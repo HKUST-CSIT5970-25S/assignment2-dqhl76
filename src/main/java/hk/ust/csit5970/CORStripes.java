@@ -28,11 +28,11 @@ import java.util.*;
 public class CORStripes extends Configured implements Tool {
 	private static final Logger LOG = Logger.getLogger(CORStripes.class);
 
-	/*
-	 * TODO: write your first-pass Mapper here.
-	 */
 	private static class CORMapper1 extends
 			Mapper<LongWritable, Text, Text, IntWritable> {
+		private final static Text WORD = new Text();
+		private final static IntWritable VALUE = new IntWritable();
+
 		@Override
 		public void map(LongWritable key, Text value, Context context)
 				throws IOException, InterruptedException {
@@ -40,29 +40,43 @@ public class CORStripes extends Configured implements Tool {
 			// Please use this tokenizer! DO NOT implement a tokenizer by yourself!
 			String clean_doc = value.toString().replaceAll("[^a-z A-Z]", " ");
 			StringTokenizer doc_tokenizer = new StringTokenizer(clean_doc);
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+
+			while (doc_tokenizer.hasMoreTokens()) {
+				String word = doc_tokenizer.nextToken();
+				if(word_set.containsKey(word)){
+					word_set.put(word, word_set.get(word) + 1);
+				} else {
+					word_set.put(word, 1);
+				}
+			}
+			for (Map.Entry<String, Integer> entry : word_set.entrySet()) {
+				WORD.set(entry.getKey());
+				VALUE.set(entry.getValue());
+				context.write(WORD, VALUE);
+			}
 		}
 	}
 
-	/*
-	 * TODO: Write your first-pass reducer here.
-	 */
 	private static class CORReducer1 extends
 			Reducer<Text, IntWritable, Text, IntWritable> {
+		private final static IntWritable VALUE = new IntWritable();
 		@Override
 		public void reduce(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+			Iterator<IntWritable> iter = values.iterator();
+			int sum = 0;
+			while (iter.hasNext()) {
+				sum += iter.next().get();
+			}
+			VALUE.set(sum);
+			context.write(key, VALUE);
 		}
 	}
 
-	/*
-	 * TODO: Write your second-pass Mapper here.
-	 */
 	public static class CORStripesMapper2 extends Mapper<LongWritable, Text, Text, MapWritable> {
+		private static final MapWritable STRIPE = new MapWritable();
+		private static final IntWritable ONE = new IntWritable(1);
+		private static final Text KEY = new Text();
+
 		@Override
 		protected void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
 			Set<String> sorted_word_set = new TreeSet<String>();
@@ -72,9 +86,17 @@ public class CORStripes extends Configured implements Tool {
 			while (doc_tokenizers.hasMoreTokens()) {
 				sorted_word_set.add(doc_tokenizers.nextToken());
 			}
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+
+			String[] words = sorted_word_set.toArray(new String[0]);
+			for (int i = 0; i < words.length; i++) {
+				KEY.set(words[i]);
+				for (int j = i + 1; j < words.length; j++) {
+					STRIPE.put(new Text(words[j]), ONE);
+				}
+				context.write(KEY, STRIPE);
+				STRIPE.clear();
+			}
+
 		}
 	}
 
@@ -82,13 +104,27 @@ public class CORStripes extends Configured implements Tool {
 	 * TODO: Write your second-pass Combiner here.
 	 */
 	public static class CORStripesCombiner2 extends Reducer<Text, MapWritable, Text, MapWritable> {
-		static IntWritable ZERO = new IntWritable(0);
+		private final static MapWritable SUM_STRIPES = new MapWritable();
 
 		@Override
 		protected void reduce(Text key, Iterable<MapWritable> values, Context context) throws IOException, InterruptedException {
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+			Iterator<MapWritable> iter = values.iterator();
+
+			while (iter.hasNext()) {
+				MapWritable  map = iter.next();
+				for ( Writable second_w : map.keySet()) {
+                    IntWritable count = (IntWritable) map.get(second_w);
+                    if(SUM_STRIPES.containsKey(second_w)) {
+                        IntWritable sum = (IntWritable) SUM_STRIPES.get(second_w);
+						sum.set(sum.get() + count.get());
+						SUM_STRIPES.put(second_w, sum);
+					} else {
+                        SUM_STRIPES.put(second_w, count);
+					}
+				}
+			}
+			context.write(key, SUM_STRIPES);
+			SUM_STRIPES.clear();
 		}
 	}
 
@@ -137,11 +173,41 @@ public class CORStripes extends Configured implements Tool {
 		/*
 		 * TODO: Write your second-pass Reducer here.
 		 */
+		private final static MapWritable SUM_STRIPES = new MapWritable();
+		private final static PairOfStrings pair = new PairOfStrings();
+		private final static DoubleWritable COR = new DoubleWritable();
 		@Override
 		protected void reduce(Text key, Iterable<MapWritable> values, Context context) throws IOException, InterruptedException {
-			/*
-			 * TODO: Your implementation goes here.
-			 */
+			Iterator<MapWritable> iter = values.iterator();
+
+			while (iter.hasNext()) {
+				MapWritable  map = iter.next();
+				for ( Writable second_w : map.keySet()) {
+                    IntWritable count = (IntWritable) map.get(second_w);
+                    if(SUM_STRIPES.containsKey(second_w)) {
+                        IntWritable sum = (IntWritable) SUM_STRIPES.get(second_w);
+						sum.set(sum.get() + count.get());
+						SUM_STRIPES.put(second_w, sum);
+					} else {
+                        SUM_STRIPES.put(second_w, count);
+					}
+				}
+			}
+			String first_w = key.toString();
+			for (Map.Entry<Writable, Writable> entry: SUM_STRIPES.entrySet()) {
+				// COR(A, B) = Freq(A, B) / (Freq(A) * Freq(B))
+				String second_w = entry.getKey().toString();
+				pair.set(first_w, second_w);
+				int freq_a_b = ((IntWritable) entry.getValue()).get();
+
+				int freq_a = word_total_map.get(first_w);
+				int freq_b = word_total_map.get(second_w);
+				double cor = (double) freq_a_b / (double) (freq_a * freq_b);
+				COR.set(cor);
+				context.write(pair, COR);
+			}
+			SUM_STRIPES.clear();
+
 		}
 	}
 
